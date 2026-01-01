@@ -60,8 +60,35 @@ export async function POST() {
                         await notion.updateInvoiceUrl(inv.id, correctLink);
                         fixedLinks++;
                     }
+
+                    // REPARACIÓN: Si el monto es 0 ó inválido, intentar extraerlo del archivo
+                    if (inv.id && (inv.monto === 0 || !inv.monto)) {
+                        console.log(`Intentando reparar factura ${inv.folioFiscal} con monto 0...`);
+                        const buffer = await dropbox.downloadFile(match.path_display);
+                        const ext = match.name.split('.').pop()?.toLowerCase();
+
+                        let extractedResult = null;
+                        if (ext === 'pdf') {
+                            const { PDFService } = await import('@/lib/services/pdf');
+                            const text = await PDFService.getInstance().extractTextFromPDF(buffer);
+                            extractedResult = await PDFService.getInstance().extractInvoiceData(text);
+                        } else if (['jpg', 'jpeg', 'png'].includes(ext || '')) {
+                            const { OCRService } = await import('@/lib/services/ocr');
+                            const text = await OCRService.getInstance().extractTextFromImage(buffer);
+                            extractedResult = await OCRService.getInstance().extractInvoiceData(text);
+                        }
+
+                        if (extractedResult && extractedResult.monto && extractedResult.monto > 0) {
+                            console.log(`Reparación exitosa para ${inv.folioFiscal}: Monto ${extractedResult.monto}`);
+                            await notion.updateInvoiceData(inv.id, {
+                                monto: extractedResult.monto,
+                                fecha: (!inv.fecha && extractedResult.fecha) ? extractedResult.fecha : undefined
+                            });
+                        }
+                    }
+
                 } catch (e) {
-                    console.error(`Error fixing link invoice ${inv.id}`, e);
+                    console.error(`Error fixing/repairing invoice ${inv.id}`, e);
                 }
             }
         }

@@ -5,7 +5,7 @@ import { config } from '@/lib/config';
 export class OCRService {
   private static instance: OCRService;
 
-  private constructor() {}
+  private constructor() { }
 
   public static getInstance(): OCRService {
     if (!OCRService.instance) {
@@ -17,10 +17,14 @@ export class OCRService {
   /**
    * Procesa una imagen y extrae texto usando OCR
    */
-  async extractTextFromImage(imageFile: File): Promise<string> {
+  /**
+   * Procesa una imagen y extrae texto usando OCR
+   */
+  async extractTextFromImage(imageInput: File | Buffer): Promise<string> {
     try {
+      // Tesseract.js accepta File, Blob, Buffer, etc.
       const { data: { text } } = await Tesseract.recognize(
-        imageFile,
+        imageInput,
         config.ocr.language,
         {
           logger: (m) => {
@@ -43,15 +47,15 @@ export class OCRService {
   async extractInvoiceData(text: string): Promise<OCRResult> {
     try {
       const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-      
+
       console.log('Texto extraído:', text);
       console.log('Líneas procesadas:', lines);
-      
+
       // Patrones específicos para facturas mexicanas (CFDI)
       const folioFiscalPattern = /folio\s*fiscal[:\s]*([A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12})/i;
       // Total: prioriza líneas que contienen la palabra "Total"
       const totalPattern = /\btotal\b[\s:]*\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+\.[0-9]{2})/i;
-      
+
       // Fechas más robustas - múltiples contextos
       const fechaEmisionPatterns = [
         // "Código postal, fecha y hora de emisión:" - patrón específico
@@ -65,16 +69,16 @@ export class OCRService {
         // Patrón genérico para fechas sin hora (evitar cadenas de certificación)
         /(?!.*\|\|.*)([0-9]{4}[\/\-\.][0-9]{2}[\/\-\.][0-9]{2})/
       ];
-      
+
       const fechaCertificacionPatterns = [
         /(?:fecha\s*(?:y\s*hora\s*de\s*)?de\s*certificaci[oó]n)[:\s]*([0-9]{4}[\/\-\.][0-9]{2}[\/\-\.][0-9]{2}(?:\s+[0-9]{2}:[0-9]{2}:[0-9]{2})?)/i,
         /fecha\s*y\s*hora\s*de\s*certificaci[oó]n[:\s]*([0-9]{4}[\/\-\.][0-9]{2}[\/\-\.][0-9]{2}(?:\s+[0-9]{2}:[0-9]{2}:[0-9]{2})?)/i
       ];
-      
+
       // Monto genérico (sin flag global para capturar el primer grupo)
       const anyAmountPattern = /(?:\$\s*)?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2}))/;
       const proveedorPattern = /(clínica|hospital|farmacia|médico|doctor|dr\.|dra\.|centro médico|consultorio|laboratorio)/i;
-      
+
       let fecha: string | undefined;
       let monto: number | undefined;
       let proveedor: string | undefined;
@@ -191,10 +195,10 @@ export class OCRService {
           if (pattern.test(line)) return false;
         }
         return !totalPattern.test(line) &&
-               !proveedorPattern.test(line) &&
-               !folioFiscalPattern.test(line);
+          !proveedorPattern.test(line) &&
+          !folioFiscalPattern.test(line);
       });
-      
+
       if (descripcionLines.length > 0) {
         descripcion = descripcionLines.slice(0, 3).join(' ');
         confianza += 0.1;
@@ -224,22 +228,22 @@ export class OCRService {
   private formatDate(dateString: string): string {
     try {
       console.log('Formateando fecha:', dateString);
-      
+
       // Si ya está en formato YYYY-MM-DD, devolverlo
       if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
         return dateString;
       }
-      
+
       // Si tiene hora, separarla
       const dateOnly = dateString.split(' ')[0];
-      
+
       // Normalizar separadores
       const normalized = dateOnly.replace(/[\/\-\.]/g, '/');
       const parts = normalized.split('/');
-      
+
       if (parts.length === 3) {
         let day, month, year;
-        
+
         // Detectar formato YYYY/MM/DD
         if (parts[0].length === 4) {
           [year, month, day] = parts;
@@ -250,12 +254,12 @@ export class OCRService {
             year = '20' + year;
           }
         }
-        
+
         const result = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
         console.log('Fecha formateada:', result);
         return result;
       }
-      
+
       console.log('No se pudo formatear la fecha:', dateString);
       return dateString;
     } catch (error) {

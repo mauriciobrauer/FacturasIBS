@@ -206,6 +206,46 @@ export class NotionService {
   }
 
   /**
+   * Actualiza el Monto de una factura y opcionalmente otros campos
+   */
+  async updateInvoiceData(invoiceId: string, data: { monto?: number, fecha?: string, proveedor?: string }): Promise<boolean> {
+    try {
+      // Detectar nombres de propiedades
+      const db = await this.notion.databases.retrieve({ database_id: config.notion.databaseId });
+      const props = db.properties as Record<string, any>;
+      const findProp = (candidates: string[], type: string) => {
+        const keys = Object.keys(props);
+        for (const c of candidates) {
+          const k = keys.find((k) => k.toLowerCase() === c.toLowerCase());
+          if (k && props[k].type === type) return k;
+        }
+        return keys.find((k) => props[k].type === type);
+      };
+
+      const numberKey = findProp(['Importe ($ MXN)', 'Importe', 'Monto', 'Total'], 'number');
+      const dateKey = findProp(['Fecha', 'Emisión', 'Fecha de emisión'], 'date');
+      const titleKey = findProp(['Folio', 'Proveedor', 'Título', 'Title'], 'title');
+
+      const properties: any = {};
+      if (numberKey && data.monto !== undefined) properties[numberKey] = { number: data.monto };
+      if (dateKey && data.fecha) properties[dateKey] = { date: { start: data.fecha } };
+      // No actualizamos título (proveedor) por seguridad, a menos que sea necesario
+
+      if (Object.keys(properties).length === 0) return false;
+
+      const response = await this.notion.pages.update({
+        page_id: invoiceId,
+        properties,
+      });
+
+      return !!response;
+    } catch (error) {
+      console.error('Error actualizando datos de factura:', error);
+      return false;
+    }
+  }
+
+  /**
    * Obtiene estadísticas de facturas
    */
   async getInvoiceStats(): Promise<{
