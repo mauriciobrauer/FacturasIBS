@@ -38,7 +38,7 @@ export class DropboxService {
       const response = await this.dropbox.filesUpload({
         path: filePath,
         contents: arrayBuffer,
-        mode: 'add',
+        mode: { '.tag': 'add' },
         autorename: true,
       });
 
@@ -60,29 +60,60 @@ export class DropboxService {
   }
 
   /**
-   * Obtiene un enlace público para un archivo
+   * Genera un enlace compartido persistente para el archivo.
+   * Si ya existe, lo recupera.
+   */
+  async createSharedLink(path: string): Promise<string> {
+    const exec = async () => {
+      try {
+        // Intentar crear un nuevo enlace compartido
+        const response = await this.dropbox.sharingCreateSharedLinkWithSettings({ path });
+        return response.result.url;
+      } catch (error: any) {
+        // Si ya existe, recuperar el existente
+        if (error?.error?.['.tag'] === 'shared_link_already_exists' ||
+          JSON.stringify(error).includes('shared_link_already_exists')) {
+          const listResponse = await this.dropbox.sharingListSharedLinks({
+            path,
+            direct_only: true
+          });
+          if (listResponse.result.links.length > 0) {
+            return listResponse.result.links[0].url;
+          }
+        }
+        throw error;
+      }
+    };
+
+    try {
+      let url = await this.withRefresh(exec);
+      // Convertir ?dl=0 a ?raw=1 o mantenerlo para vista previa
+      // El usuario quiere vista previa, así que el default de Dropbox (?dl=0) suele abrir la vista web, que es lo deseado.
+      return url;
+    } catch (e) {
+      console.error('Error creating shared link:', e);
+      // Fallback: Construir link manual basado en path_display real del archivo
+      // path es ej: "/Aplicaciones/FacturasIBS/archivo.pdf"
+      // Queremos: https://www.dropbox.com/home/Aplicaciones/FacturasIBS?preview=archivo.pdf
+
+      try {
+        const pathParts = path.split('/');
+        const fileName = pathParts.pop() || '';
+        const folderPath = pathParts.join('/'); // ej: "/Aplicaciones/FacturasIBS"
+
+        return `https://www.dropbox.com/home${folderPath}?preview=${encodeURIComponent(fileName)}`;
+      } catch (err) {
+        console.error('Error constructing fallback link:', err);
+        return 'https://www.dropbox.com/home';
+      }
+    }
+  }
+
+  /**
+   * Obtiene un enlace público para un archivo (Deprecated, use createSharedLink)
    */
   async getPublicLink(filePath: string): Promise<string> {
-    try {
-      // Extraer el nombre del archivo de la ruta
-      const fileName = filePath.split('/').pop() || 'archivo';
-      console.log('Nombre del archivo:', fileName);
-      console.log('Ruta del archivo:', filePath);
-      
-      // Determinar carpeta para construir el preview correcto
-      const parent = filePath.substring(0, filePath.lastIndexOf('/')) || '/';
-      const inFacturas = parent === '/FacturasIBS' || parent.startsWith('/FacturasIBS/');
-      const dropboxWebUrl = inFacturas
-        ? `https://www.dropbox.com/home/FacturasIBS?preview=${encodeURIComponent(fileName)}`
-        : `https://www.dropbox.com/home?preview=${encodeURIComponent(fileName)}`;
-      
-      console.log('URL de Dropbox generada:', dropboxWebUrl);
-      return dropboxWebUrl;
-    } catch (error) {
-      console.error('Error generando enlace de Dropbox:', error);
-      // Fallback a la URL de la carpeta
-      return 'https://www.dropbox.com/home/Aplicaciones/FacturasIBS';
-    }
+    return this.createSharedLink(filePath);
   }
 
   /**
@@ -92,10 +123,10 @@ export class DropboxService {
     // Extraer el nombre del archivo de la URL de compartir si es posible
     const urlParts = shareUrl.split('/');
     const fileName = urlParts[urlParts.length - 1] || 'archivo';
-    
+
     // Generar URL con preview del archivo específico
     const dropboxWebUrl = `https://www.dropbox.com/home?preview=${encodeURIComponent(fileName)}`;
-    
+
     console.log('URL de Dropbox web:', dropboxWebUrl);
     return dropboxWebUrl;
   }
@@ -105,25 +136,31 @@ export class DropboxService {
    */
   async listFiles(folderPath: string = ''): Promise<DropboxFile[]> {
     const exec = async () => {
-      const response = await this.dropbox.filesListFolder({
+      let response = await this.dropbox.filesListFolder({
         path: folderPath,
         recursive: false,
       });
 
-      if (response.status === 200 && response.result) {
-        return response.result.entries
-          .filter((entry: any) => entry['.tag'] === 'file')
-          .map((file: any) => ({
-            id: file.id,
-            name: file.name,
-            path_display: file.path_display,
-            size: file.size,
-            client_modified: file.client_modified,
-            server_modified: file.server_modified,
-            content_hash: file.content_hash || '',
-          }));
+      let allEntries = response.result.entries;
+
+      while (response.result.has_more) {
+        response = await this.dropbox.filesListFolderContinue({
+          cursor: response.result.cursor
+        });
+        allEntries = allEntries.concat(response.result.entries);
       }
-      return [];
+
+      return allEntries
+        .filter((entry: any) => entry['.tag'] === 'file')
+        .map((file: any) => ({
+          id: file.id,
+          name: file.name,
+          path_display: file.path_display,
+          size: file.size,
+          client_modified: file.client_modified,
+          server_modified: file.server_modified,
+          content_hash: file.content_hash || '',
+        }));
     };
 
     try {

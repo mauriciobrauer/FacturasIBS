@@ -27,15 +27,15 @@ export async function POST(request: NextRequest) {
     console.log('File name:', file.name);
     console.log('File object:', file);
     console.log('Allowed types:', config.upload.allowedTypes);
-    
+
     // Validar por tipo MIME o extensión (con verificación de null/undefined)
     const fileName = file.name || '';
-    const isValidType = config.upload.allowedTypes.includes(file.type) || 
-                       fileName.toLowerCase().endsWith('.pdf') ||
-                       fileName.toLowerCase().endsWith('.jpg') ||
-                       fileName.toLowerCase().endsWith('.jpeg') ||
-                       fileName.toLowerCase().endsWith('.png');
-    
+    const isValidType = (config.upload.allowedTypes as readonly string[]).includes(file.type) ||
+      fileName.toLowerCase().endsWith('.pdf') ||
+      fileName.toLowerCase().endsWith('.jpg') ||
+      fileName.toLowerCase().endsWith('.jpeg') ||
+      fileName.toLowerCase().endsWith('.png');
+
     if (!isValidType) {
       return NextResponse.json(
         { error: `Tipo de archivo no soportado. Tipo recibido: ${file.type}, Nombre: ${fileName}` },
@@ -85,16 +85,16 @@ export async function POST(request: NextRequest) {
       // Verificar si existe una factura con el mismo Folio Fiscal
       const storageService = StorageService.getInstance();
       console.log('Folio Fiscal extraído:', ocrResult.folioFiscal);
-      
+
       if (ocrResult.folioFiscal) {
         console.log('Verificando duplicados para folio:', ocrResult.folioFiscal);
         const isDuplicate = await storageService.isDuplicateFolio(ocrResult.folioFiscal);
         console.log('¿Es duplicado?', isDuplicate);
-        
+
         if (isDuplicate) {
           const existingInvoice = await storageService.findInvoiceByFolio(ocrResult.folioFiscal);
           console.log('Factura existente encontrada:', existingInvoice);
-          
+
           return NextResponse.json({
             success: false,
             error: 'Factura duplicada',
@@ -107,12 +107,11 @@ export async function POST(request: NextRequest) {
         console.log('No se encontró Folio Fiscal, continuando con la subida');
       }
 
-        // Si no es duplicada, subir archivo a Dropbox
-        const desiredBaseName = ocrResult.folioFiscal ? ocrResult.folioFiscal : undefined;
-        const dropboxFile = await dropboxService.uploadFile(file, '', desiredBaseName);
-        // Generar URL con preview del archivo específico
-        const fileName = dropboxFile.name;
-        const publicLink = `https://www.dropbox.com/home?preview=${encodeURIComponent(fileName)}`;
+      // Si no es duplicada, subir archivo a Dropbox
+      const desiredBaseName = ocrResult.folioFiscal ? ocrResult.folioFiscal : undefined;
+      const dropboxFile = await dropboxService.uploadFile(file, '', desiredBaseName);
+      // Generar enlace compartido usando la API para garantizar acceso correcto
+      const publicLink = await dropboxService.createSharedLink(dropboxFile.path_display);
 
       // Crear datos finales de la factura
       const finalInvoice: InvoiceData = {
@@ -128,9 +127,9 @@ export async function POST(request: NextRequest) {
         fechaActualizacion: new Date().toISOString(),
       };
 
-    // (Manifest eliminado)
+      // (Manifest eliminado)
 
-        // Sin Notion por ahora - solo procesar archivo
+      // Sin Notion por ahora - solo procesar archivo
 
       // Crear registro en Notion (no bloquear si falla)
       try {
@@ -149,7 +148,7 @@ export async function POST(request: NextRequest) {
       console.error('Error procesando archivo:', processingError);
 
       return NextResponse.json(
-        { 
+        {
           error: 'Error procesando el archivo',
           details: processingError instanceof Error ? processingError.message : 'Error desconocido'
         },
@@ -160,7 +159,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error en API de subida:', error);
     return NextResponse.json(
-      { 
+      {
         error: 'Error interno del servidor',
         details: error instanceof Error ? error.message : 'Error desconocido'
       },

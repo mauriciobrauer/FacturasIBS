@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { NotionService } from '@/lib/services/notion';
 import { validateConfig } from '@/lib/config';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     validateConfig();

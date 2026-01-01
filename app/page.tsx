@@ -10,7 +10,7 @@ import { InvoicesTable } from '@/components/dashboard/InvoicesTable';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { UploadedFile, InvoiceData } from '@/lib/types';
-import { FileText, DollarSign, Upload } from 'lucide-react';
+import { FileText, DollarSign, Upload, RefreshCw } from 'lucide-react';
 
 export default function HomePage() {
   const [activeSection, setActiveSection] = useState('dashboard');
@@ -24,6 +24,26 @@ export default function HomePage() {
   const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);
   const [extractedData, setExtractedData] = useState<InvoiceData | null>(null);
   const [invoices, setInvoices] = useState<InvoiceData[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleSync = async () => {
+    try {
+      setIsSyncing(true);
+      const res = await fetch('/api/sync', { method: 'POST' });
+      const data = await res.json();
+
+      if (res.ok) {
+        alert(data.message || 'Sincronización completada');
+        window.location.reload();
+      } else {
+        alert('Error al sincronizar: ' + data.error);
+      }
+    } catch (error) {
+      alert('Error de conexión al sincronizar');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
   // Cargar facturas desde Notion para persistencia tras refresh
   useEffect(() => {
     (async () => {
@@ -32,9 +52,11 @@ export default function HomePage() {
         if (res.ok) {
           const j = await res.json();
           const arr: InvoiceData[] = j?.data?.invoices || [];
+          // Ordenar por fecha descendente (más reciente arriba)
+          arr.sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
           setInvoices(arr);
         }
-      } catch (_) {}
+      } catch (_) { }
     })();
   }, []);
 
@@ -155,7 +177,7 @@ export default function HomePage() {
 
       console.log('Response status:', response.status);
       console.log('Response headers:', response.headers);
-      
+
       const result = await response.json();
       console.log('Response result:', result);
       console.timeEnd('⏱️ /api/upload');
@@ -190,18 +212,18 @@ export default function HomePage() {
           setUploadProgress(0);
           setSelectedFile(null);
           setOriginalFile(null);
-          
+
           // Mostrar mensaje de duplicado con información de la factura existente
           const duplicateMessage = `${result.message}\n\nFactura existente:\n` +
             `- Fecha: ${new Date(result.existingInvoice.fecha).toLocaleDateString('es-MX')}\n` +
             `- Monto: ${new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(result.existingInvoice.monto)}\n` +
             `- Proveedor: ${result.existingInvoice.proveedor}\n` +
             `- Estado: ${result.existingInvoice.estado}`;
-          
+
           alert(duplicateMessage);
           return;
         }
-        
+
         throw new Error(result.error || 'Error subiendo archivo');
       }
     } catch (error) {
@@ -215,7 +237,7 @@ export default function HomePage() {
       setIsUploading(false);
       setUploadProgress(0);
       setOriginalFile(null);
-      
+
       // Mostrar mensaje de error específico
       const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
       const friendly = errorMessage.includes('The user aborted a request') || errorMessage.includes('aborted')
@@ -229,7 +251,7 @@ export default function HomePage() {
     console.log('🛑 Cancelar subida presionado');
     try {
       uploadController?.abort();
-    } catch {}
+    } catch { }
     if (waitingIntervalRef.current) clearInterval(waitingIntervalRef.current);
     if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
     if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
@@ -254,10 +276,13 @@ export default function HomePage() {
         fechaActualizacion: new Date().toISOString(),
         estado: 'completado'
       };
-      
-      setInvoices(prevInvoices => [newInvoice, ...prevInvoices]);
+
+      setInvoices(prevInvoices => {
+        const updated = [newInvoice, ...prevInvoices];
+        return updated.sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+      });
       console.log('Factura confirmada y agregada:', newInvoice);
-      
+
       // Guardar en el servicio de almacenamiento persistente
       try {
         const response = await fetch('/api/invoices/storage', {
@@ -267,7 +292,7 @@ export default function HomePage() {
           },
           body: JSON.stringify({ invoice: newInvoice }),
         });
-        
+
         if (response.ok) {
           console.log('Factura guardada en almacenamiento persistente');
         } else {
@@ -277,7 +302,7 @@ export default function HomePage() {
         console.error('Error guardando factura:', error);
       }
     }
-    
+
     setExtractedData(null);
     // Redirigir al Panel de Control
     setActiveSection('dashboard');
@@ -289,7 +314,7 @@ export default function HomePage() {
         // Extraer el path del archivo de la URL de Dropbox
         const url = new URL(extractedData.archivoUrl);
         const path = url.pathname;
-        
+
         // Llamar a la API para eliminar el archivo de Dropbox
         const response = await fetch('/api/delete-dropbox-file', {
           method: 'POST',
@@ -308,7 +333,7 @@ export default function HomePage() {
         console.error('Error eliminando archivo:', error);
       }
     }
-    
+
     setExtractedData(null);
   };
 
@@ -317,51 +342,62 @@ export default function HomePage() {
   const renderContent = () => {
     switch (activeSection) {
       case 'dashboard':
-      console.log('🔍 Debug Dashboard - Rendering dashboard');
-      return (
-        <div className="space-y-2 sm:space-y-3 max-w-full">
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Panel de Control</h1>
-
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+        console.log('🔍 Debug Dashboard - Rendering dashboard');
+        return (
+          <div className="space-y-2 sm:space-y-3 max-w-full">
+            <div className="flex justify-between items-center mb-4">
+              <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Panel de Control</h1>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSync}
+                disabled={isSyncing}
+                className="flex items-center space-x-2"
+              >
+                <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>{isSyncing ? 'Sincronizando...' : 'Sincronizar'}</span>
+              </Button>
+            </div>
+            {/* Stats Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
               <StatsCard
                 title="Total Facturas"
                 value={invoices.length.toString()}
                 borderColor="border-l-primary-500"
                 icon={<FileText className="w-6 h-6" />}
               />
-            <StatsCard
-              title="Monto Total"
-              value={new Intl.NumberFormat('es-MX', {
-                style: 'currency',
-                currency: 'MXN',
-                minimumFractionDigits: 0,
-                maximumFractionDigits: 0,
-              }).format(invoices.reduce((sum, inv) => sum + inv.monto, 0))}
-              borderColor="border-l-blue-500"
-              icon={<DollarSign className="w-6 h-6" />}
-            />
+              <StatsCard
+                title="Monto Total"
+                value={new Intl.NumberFormat('es-MX', {
+                  style: 'currency',
+                  currency: 'MXN',
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 0,
+                }).format(invoices.reduce((sum, inv) => sum + inv.monto, 0))}
+                borderColor="border-l-blue-500"
+                icon={<DollarSign className="w-6 h-6" />}
+              />
             </div>
 
-          {/* Facturas o Estado Vacío */}
-          {invoices.length === 0 ? (
-            <div className="text-center py-8 sm:py-12">
-              <FileText className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-gray-400" />
-              <h3 className="mt-2 text-sm sm:text-base font-medium text-gray-900">No hay facturas</h3>
-              <p className="mt-1 text-xs sm:text-sm text-gray-500 px-4">
-                Comienza subiendo tu primera factura médica.
-              </p>
-              <div className="mt-4 sm:mt-6">
-                <Button
-                  onClick={() => setActiveSection('upload')}
-                  className="bg-primary-500 hover:bg-primary-600 text-white text-sm sm:text-base px-4 py-2"
-                >
-                  <Upload className="w-4 h-4 mr-2" />
-                  Subir Factura
-                </Button>
-                
+            {/* Facturas o Estado Vacío */}
+            {invoices.length === 0 ? (
+              <div className="text-center py-8 sm:py-12">
+                <FileText className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-gray-400" />
+                <h3 className="mt-2 text-sm sm:text-base font-medium text-gray-900">No hay facturas</h3>
+                <p className="mt-1 text-xs sm:text-sm text-gray-500 px-4">
+                  Comienza subiendo tu primera factura médica.
+                </p>
+                <div className="mt-4 sm:mt-6">
+                  <Button
+                    onClick={() => setActiveSection('upload')}
+                    className="bg-primary-500 hover:bg-primary-600 text-white text-sm sm:text-base px-4 py-2"
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    Subir Factura
+                  </Button>
+
+                </div>
               </div>
-            </div>
             ) : (
               <InvoicesTable
                 invoices={invoices}
@@ -369,7 +405,7 @@ export default function HomePage() {
               />
             )}
 
-          
+
           </div>
         );
 
@@ -392,7 +428,7 @@ export default function HomePage() {
 
   console.log('🔍 Debug Layout - activeSection:', activeSection);
   console.log('🔍 Debug Layout - invoices.length:', invoices.length);
-  
+
   console.log('🔍 Debug Layout - window.innerWidth:', typeof window !== 'undefined' ? window.innerWidth : 'SSR');
 
   return (
@@ -460,19 +496,19 @@ export default function HomePage() {
           ) : (
             renderContent()
           )}
-            </main>
-          </div>
-          
-          {/* Modal de datos extraídos */}
-          {extractedData && (
-            <ExtractedData
-              invoiceData={extractedData}
-              onConfirm={handleConfirmExtractedData}
-              onCancel={handleCancelExtractedData}
-            />
-          )}
+        </main>
+      </div>
 
-          
-        </div>
-      );
-    }
+      {/* Modal de datos extraídos */}
+      {extractedData && (
+        <ExtractedData
+          invoiceData={extractedData}
+          onConfirm={handleConfirmExtractedData}
+          onCancel={handleCancelExtractedData}
+        />
+      )}
+
+
+    </div>
+  );
+}

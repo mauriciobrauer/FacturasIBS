@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { config, validateConfig } from '@/lib/config';
 import { NotionService } from '@/lib/services/notion';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     // Validar configuración
@@ -18,7 +20,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Error obteniendo facturas:', error);
     return NextResponse.json(
-      { 
+      {
         error: 'Error obteniendo facturas',
         details: error instanceof Error ? error.message : 'Error desconocido'
       },
@@ -44,7 +46,7 @@ export async function POST(request: NextRequest) {
     }
 
     const notionService = NotionService.getInstance();
-    
+
     const invoiceData = {
       fecha,
       monto: monto || 0,
@@ -69,7 +71,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error creando factura:', error);
     return NextResponse.json(
-      { 
+      {
         error: 'Error creando factura',
         details: error instanceof Error ? error.message : 'Error desconocido'
       },

@@ -106,38 +106,49 @@ export class NotionService {
       const urlKey = findProp(['Link', 'Archivo', 'URL'], 'url');
       const statusKey = findProp(['Estado', 'Status'], 'select');
 
-      const response = await this.notion.databases.query({
-        database_id: config.notion.databaseId,
-        sorts: dateKey
-          ? [
+      const allResults: any[] = [];
+      let hasMore = true;
+      let startCursor: string | undefined = undefined;
+
+      while (hasMore) {
+        const response: any = await this.notion.databases.query({
+          database_id: config.notion.databaseId,
+          start_cursor: startCursor,
+          page_size: 100, // Máximo permitido por Notion
+          sorts: dateKey
+            ? [
               {
                 property: dateKey,
                 direction: 'descending',
               } as any,
             ]
-          : undefined,
-      });
-
-      if (response.results) {
-        return response.results.map((page: any) => {
-          const p = page.properties || {};
-          const folio = p?.[titleKey]?.title?.[0]?.plain_text || p?.[titleKey]?.title?.[0]?.text?.content || '';
-          return {
-            id: page.id,
-            fecha: dateKey ? p?.[dateKey]?.date?.start || '' : '',
-            monto: numberKey ? p?.[numberKey]?.number || 0 : 0,
-            proveedor: folio || '',
-            descripcion: '',
-            archivoUrl: urlKey ? p?.[urlKey]?.url || '' : '',
-            estado: statusKey ? p?.[statusKey]?.select?.name || 'completado' : 'completado',
-            fechaCreacion: page.created_time,
-            fechaActualizacion: page.last_edited_time,
-            folioFiscal: folio || undefined,
-          };
+            : undefined,
         });
+
+        if (response.results) {
+          allResults.push(...response.results);
+        }
+
+        hasMore = response.has_more;
+        startCursor = response.next_cursor;
       }
 
-      return [];
+      return allResults.map((page: any) => {
+        const p = page.properties || {};
+        const folio = p?.[titleKey]?.title?.[0]?.plain_text || p?.[titleKey]?.title?.[0]?.text?.content || '';
+        return {
+          id: page.id,
+          fecha: dateKey ? p?.[dateKey]?.date?.start || '' : '',
+          monto: numberKey ? p?.[numberKey]?.number || 0 : 0,
+          proveedor: folio || '',
+          descripcion: '',
+          archivoUrl: urlKey ? p?.[urlKey]?.url || '' : '',
+          estado: statusKey ? p?.[statusKey]?.select?.name || 'completado' : 'completado',
+          fechaCreacion: page.created_time,
+          fechaActualizacion: page.last_edited_time,
+          folioFiscal: folio || undefined,
+        };
+      });
     } catch (error) {
       console.error('Error obteniendo facturas de Notion:', error);
       return [];
@@ -168,6 +179,33 @@ export class NotionService {
   }
 
   /**
+   * Actualiza la URL de una factura
+   */
+  async updateInvoiceUrl(invoiceId: string, newUrl: string): Promise<boolean> {
+    try {
+      // Detectar nombre de propiedad URL dinámicamente
+      const db = await this.notion.databases.retrieve({ database_id: config.notion.databaseId });
+      const props = db.properties as Record<string, any>;
+      const keys = Object.keys(props);
+      const urlKey = keys.find((k) => k.toLowerCase() === 'archivo' || k.toLowerCase() === 'link' || k.toLowerCase() === 'url') || 'Archivo';
+
+      const response = await this.notion.pages.update({
+        page_id: invoiceId,
+        properties: {
+          [urlKey]: {
+            url: newUrl,
+          },
+        },
+      });
+
+      return !!response;
+    } catch (error) {
+      console.error('Error actualizando URL de factura:', error);
+      return false;
+    }
+  }
+
+  /**
    * Obtiene estadísticas de facturas
    */
   async getInvoiceStats(): Promise<{
@@ -177,7 +215,7 @@ export class NotionService {
   }> {
     try {
       const invoices = await this.getInvoices();
-      
+
       const total = invoices.length;
       const totalAmount = invoices.reduce((sum, invoice) => sum + invoice.monto, 0);
       const pending = invoices.filter(invoice => invoice.estado === 'procesando').length;
@@ -209,7 +247,7 @@ export class NotionService {
       if (response.properties) {
         const requiredProperties = ['Fecha', 'Monto', 'Proveedor', 'Descripcion', 'Archivo', 'Estado'];
         const existingProperties = Object.keys(response.properties);
-        
+
         return requiredProperties.every(prop => existingProperties.includes(prop));
       }
 
